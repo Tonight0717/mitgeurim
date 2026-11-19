@@ -185,9 +185,61 @@ test('Gemini 요청은 구조화 JSON을 요청하고 API 키를 본문에 넣�
   const request = C.buildAIRequest(item);
   assert.equal(request.generationConfig.responseMimeType, 'application/json');
   assert.ok(request.generationConfig.responseSchema);
+  assert.equal('temperature' in request.generationConfig, false, 'Gemini 3.x에서 폐지된 temperature를 보내면 안 됩니다.');
+  assert.equal('thinkingConfig' in request.generationConfig, false, '사고 설정은 모델명을 아는 요청 단계에서만 붙입니다.');
   const serialized = JSON.stringify(request);
   assert.ok(serialized.includes(item.fields.idea));
   assert.ok(!serialized.includes('fake-secret-DO-NOT-SEND-IN-BODY'));
+});
+
+test('gemini-2.5 모델은 temperature 없이 thinkingBudget 0을 보낸다', () => {
+  const item = idea();
+  item.mode = 'ai';
+  for (const model of ['gemini-2.5-flash', 'gemini-2.5-flash-lite']) {
+    const request = C.applyModelParams(C.buildAIRequest(item), model);
+    assert.equal('temperature' in request.generationConfig, false, model);
+    assert.deepEqual(plain(request.generationConfig.thinkingConfig), { thinkingBudget: 0 }, model);
+  }
+});
+
+test('gemini-3.x 모델은 thinkingLevel minimal만 보낸다', () => {
+  const item = idea();
+  item.mode = 'ai';
+  for (const model of ['gemini-3.5-flash-lite', 'gemini-3.6-flash']) {
+    const request = C.applyModelParams(C.buildAIRequest(item), model);
+    assert.equal('temperature' in request.generationConfig, false, model);
+    assert.deepEqual(plain(request.generationConfig.thinkingConfig), { thinkingLevel: 'minimal' }, model);
+    assert.equal('thinkingBudget' in request.generationConfig.thinkingConfig, false, `${model}: thinking_level과 thinking_budget을 함께 보내면 400입니다.`);
+  }
+});
+
+test('별칭 모델에는 thinkingConfig를 넣지 않는다', () => {
+  const item = idea();
+  item.mode = 'ai';
+  for (const model of ['gemini-flash-lite-latest', 'gemini-flash-latest', '', undefined]) {
+    const request = C.applyModelParams(C.buildAIRequest(item), model);
+    assert.equal('thinkingConfig' in request.generationConfig, false, String(model));
+    assert.equal('temperature' in request.generationConfig, false, String(model));
+    assert.equal(request.generationConfig.maxOutputTokens, 4096, String(model));
+  }
+});
+
+test('폐지된 2.5 모델명은 안내 문구로 이어진다', () => {
+  assert.equal(C.isRetiringModel('gemini-2.5-flash'), true);
+  assert.equal(C.isRetiringModel(' gemini-2.5-flash-lite '), true);
+  assert.equal(C.isRetiringModel('gemini-3.5-flash-lite'), false);
+  assert.equal(C.isRetiringModel('gemini-flash-latest'), false);
+  assert.equal(C.isRetiringModel(undefined), false);
+  assert.match(html, /gemini-2\.5 계열은 신규 사용자에게 막혀 있을 수 있어요/);
+  assert.match(html, /모델 이름이 바뀌었을 수 있으니 연결 설정에서 gemini-flash-lite-latest로 시도해 보세요/);
+});
+
+test('기본 모델과 모델 후보가 최신 세대를 가리킨다', () => {
+  assert.match(html, /const DEFAULT_MODEL = 'gemini-3\.5-flash-lite'/);
+  const datalist = html.match(/<datalist id="modelOptions">([\s\S]*?)<\/datalist>/);
+  assert.ok(datalist, '모델 후보 목록이 있어야 합니다.');
+  const options = [...datalist[1].matchAll(/value="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(options, ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-2.5-flash-lite']);
 });
 
 test('짧은 답변도 해석할 수 있도록 현재 질문을 함께 보낸다', () => {
